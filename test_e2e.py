@@ -1,6 +1,8 @@
-"""Cliniva 10/10+ E2E — 15 checks. Run: python test_e2e.py"""
+"""Isolated module-level checks. Run: python test_e2e.py"""
+import atexit
 import pathlib
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -15,6 +17,24 @@ from backend.rx_sign import sign_prescription, verify_prescription
 from backend.safety import check_interactions, drug_info, find_alternatives, rules_source
 from backend.scribe import apply_correction, draft_soap
 from memory.hindsight_client import bank_id_for_patient, bank_summary, recall, reflect, retain
+import backend.audit as audit_module
+import backend.ops as ops_module
+import backend.safety as safety_module
+import memory.hindsight_client as memory_module
+
+# Keep check runs away from real ignored patient, prescription, and audit data.
+_test_data = tempfile.TemporaryDirectory(prefix="cliniva-checks-")
+atexit.register(_test_data.cleanup)
+_test_root = pathlib.Path(_test_data.name)
+memory_module.LOCAL_DIR = _test_root / "banks"
+memory_module.LOCAL_DIR.mkdir()
+memory_module.HINDSIGHT_URL = ""
+audit_module.AUDIT = _test_root / "audit.jsonl"
+ops_module.DATA = _test_root
+ops_module.CHAIN = _test_root / "audit_chain.jsonl"
+# Keep these checks deterministic and offline.
+safety_module.rxnorm_lookup = lambda name: {"rxcui": None, "resolved": name}
+safety_module._openfda_label = lambda drug: ([], {"dailymed": safety_module.dailymed_link(drug)})
 
 pid = "demo-001"
 bank = bank_id_for_patient(pid)
@@ -50,13 +70,27 @@ assert verify_prescription(signed["token"])["valid"] and not verify_prescription
 ok(f"sign/verify/tamper: {signed['rx_id']}")
 
 b = fhir_bundle(pid, "91-1234-5678-9012", "dr-demo", "MCI-12345", ["azithromycin 500mg OD x3d"], signed["rx_id"], signed["body"]["issued_at"])
-assert b["resourceType"] == "Bundle"
+assert b["resourceType"] == "Bundle" and b["entry"][0]["resource"]["date"].endswith("Z")
 art = consent_artefact("91-1234-5678-9012", "cliniva-hiu", "demo-clinic", "OPD", ["Prescription"])
 assert hip_release_bundle(art, b)["released"]
 ok("FHIR + ABDM consent artefact release")
 
 assert filter_memory_by_consent({"facts": [], "observations": [], "allergies": ["penicillin"]}, Consent(revoked=True)).get("locked")
 ok("consent revoke locks")
+
+scoped = filter_memory_by_consent({
+    "facts": [
+        {"content": "allergy fact", "metadata": {"scope": "allergies"}},
+        {"content": "medication fact", "metadata": {"scope": "medications"}},
+        {"content": "unclassified free text", "metadata": {}},
+    ],
+    "observations": [{"content": "may contain any scope"}],
+    "mental_models": [{"content": "may contain any scope"}],
+    "allergies": ["penicillin"],
+}, Consent(history=True, allergies=False, medications=True))
+assert scoped["allergies"] == [] and [f["content"] for f in scoped["facts"]] == ["medication fact"]
+assert scoped["observations"] == [] and scoped["mental_models"] == []
+ok("withheld scopes strip unclassified memory")
 
 assert login("dr-demo", "demo123")["ok"] and valid_mci("MCI-12345") and not valid_mci("FAKE")
 ok("auth login + MCI format check")
@@ -68,7 +102,20 @@ chain_log("e2e", pid, "tester", {"ok": True})
 assert verify_chain(20)["ok"] and retention_check("prescription", 0)["expired"] is True
 ok("hash-chained audit + retention policy")
 
-assert suggest_slots({"followup_days": ["Saturday"]})["suggested"] and send_reminder("sms", "+91-1", "hi")["sent"]
+chain_before = ops_module.CHAIN.read_bytes()
+try:
+    ops_module.CHAIN.write_bytes(chain_before.replace(b'"event": "e2e"', b'"event": "bad"', 1))
+    assert not verify_chain()["ok"]
+    try:
+        chain_log("must-not-append", pid, "tester")
+        raise AssertionError("damaged audit chain accepted an append")
+    except RuntimeError:
+        pass
+finally:
+    ops_module.CHAIN.write_bytes(chain_before)
+ok("audit chain detects tampering and refuses append")
+
+assert suggest_slots({"followup_days": ["Saturday"]})["suggested"] and send_reminder("sms", "+91-1", "hi")["simulated"]
 ok("booking slots + reminder")
 
 assert memory_regression()["recall_hit"] and drug_info("azithromycin")["citations"]
@@ -78,7 +125,8 @@ s3 = check_interactions(["paracetamol"], ["penicillin"])
 assert s3["verdict"] in ("NO_CONFLICT", "INSUFFICIENT_DATA")
 ok(f"safe case: {s3['verdict']}")
 
-assert len(read_all(5)) >= 1 and "withdraw" in str(dpdp_notice()).lower()
+log("module_checks_complete", pid, "test_e2e")
+assert len(read_all(5)) >= 1 and "revocation" in str(dpdp_notice()).lower()
 ok("audit log + DPDP notice")
 
-print(f"ALL {n} CHECKS PASSED - Cliniva 10/10+ prod-track ready")
+print(f"ALL {n} MODULE CHECKS PASSED (HTTP API policy is not covered)")

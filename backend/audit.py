@@ -15,6 +15,9 @@ def log(event: str, patient_id: str = "", actor: str = "", detail: dict | None =
 
 
 def read_all(limit: int = 100) -> list:
+    limit = max(0, int(limit))
+    if limit == 0:
+        return []
     if not AUDIT.exists():
         return []
     lines = AUDIT.read_text(encoding="utf-8").strip().split("\n")
@@ -33,9 +36,9 @@ def dpdp_notice(purpose: str = "OPD consultation at Cliniva Demo Clinic") -> dic
         "language": ["en", "hi (on request)"],
         "collects": ["name, age, ABHA ID", "allergies, conditions, prescriptions", "consult transcript (with mic consent)"],
         "purposes": [purpose, "safety check (allergy/drug-interaction)", "follow-up reminders"],
-        "sharing": "Only with treating doctor/pharmacy via ABDM HIE-CM consent artefact. Never for marketing.",
-        "rights": "Access summary, correct errors, withdraw consent as easily as giving it. Withdrawal locks timeline.",
-        "retention": "Clinical records kept per medical law (3-10y); marketing/analytics erased on request.",
-        "contact": "Data Protection Officer: dpo@cliniva.demo | Grievance: 30-day SLA | Board: Data Protection Board of India",
-        "storage": "India (Mumbai region), AES-256 at rest, TLS 1.3 in transit, immutable audit logs",
+        "sharing": "Local demo only. No live ABDM connection or external sharing is configured by default.",
+        "rights": "This prototype demonstrates a local consent record, correction workflow, and revocation lock; it is not a complete rights-request process.",
+        "retention": "Demo files are stored locally until removed. No production retention schedule is configured.",
+        "contact": "Demo contact: dpo@cliniva.demo (not a monitored service)",
+        "storage": "Local demo storage by default. Encryption, transport security, residency, and immutable audit storage depend on deployment and are not provided by this prototype.",
     }

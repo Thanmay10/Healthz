@@ -5,7 +5,7 @@ import sqlite3
 DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 SQLITE_CANDIDATES = [DATA / "ddinter.sqlite", DATA / "ddinter.db", DATA / "DDInter.sqlite"]
 
-# Curated 10/10+ fallback (demo of real severity adjudication; replace with full DB in prod)
+# Small curated demo fallback; this is not a complete drug interaction database.
 CURATED = [
     ("amoxicillin", "penicillin", "contraindicated", "Penicillin-class cross-reactivity", "FDA label + DDInter"),
     ("ampicillin", "penicillin", "contraindicated", "Penicillin-class cross-reactivity", "FDA label"),

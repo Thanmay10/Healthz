@@ -1,42 +1,36 @@
-# Cliniva — Consent-Gated AI Health Memory + Clinical Agents
+# Cliniva — Consent-Gated Health Memory Demo
 
-Problem: doctors see 100+ patients with zero longitudinal history. Errors from forgotten allergies and drug interactions kill.
+Cliniva is a local prototype for a clinical memory and prescribing workflow. It drafts notes and safety checks for clinician review; it is not a clinical system and must not be used with real patient data.
 
-Solution: one Hindsight memory bank per patient shared by Scribe, Safety, Rx and Booking agents. AI drafts, doctor validates and signs, pharmacy verifies via QR.
+## Run locally
 
-## Quickstart (3 commands)
-
-```
+```powershell
 pip install -r backend/requirements.txt
 python backend/seed.py
 uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open `http://127.0.0.1:8000/app/` — pick demo-001 (penicillin allergy, CONFLICT case) or demo-002 (safe case).
+Open `http://127.0.0.1:8000/app/`. In this demo, the app uses `dr-demo` / `demo123` for the doctor session and `patient-demo` / `patient-demo-2` (both with `demo123`) to record each demo patient's consent. Select history, allergy, and medication scopes, click **Save patient consent**, then load the timeline or run a consult. Turn on **revoked** and save to lock access. These fixed credentials are for local demonstration only.
 
-Run checks: `python test_e2e.py` (15 checks, all PASS).
+The API requires bearer tokens for clinical and operational routes. Patient consent defaults to revoked and must be saved by a matching patient account. Prescription signing checks the authenticated doctor's identity, blocks detected interaction conflicts, and requires explicit clinician review when screening is incomplete. QR verification exposes a prescription to someone possessing the unguessable prescription URL; protect and share that QR accordingly.
 
-## Architecture
+Audit entries intentionally keep medication names and correction free text out of the general audit feed. The local audio helper limits uploads and stores them with generated filenames; the provided transcription path remains a deterministic demo stub unless a real transcription integration is configured.
 
-- `backend/main.py` — FastAPI: consult / correct / sign / verify / timeline / fhir / abdm / auth / booking / ops
-- `backend/safety.py` — RxNorm normalize, DDInter SQLite loader (`data/ddinter.sqlite` if mounted, else curated fallback), OpenFDA own-label, DailyMed citations, alternatives. Never guesses.
-- `backend/scribe.py` + `audio_scribe.py` — transcript to SOAP + ICD-10 hints, mic-consent gate
-- `memory/hindsight_client.py` — per-patient bank, retain / recall / reflect, mental models
-- `backend/rx_sign.py` + `fhir.py` — JWT + sha256 signed Rx, QR PNG, ABDM FHIR R4 bundle
-- `backend/auth.py`, `abdm.py`, `audit.py`, `ops.py`, `crypto_fields.py`, `config.py` — RBAC, consent artefacts, hash-chained audit, retention, booking, encryption
-- `frontend/` — demo UI (PWA manifest included)
+## Project map
 
-## Demo (3 min)
+- `backend/main.py` — FastAPI routes for consultations, consent, prescriptions, FHIR, audit, and operations
+- `backend/safety.py` — drug normalization and interaction lookup, with a curated fallback when DDInter data is not mounted
+- `backend/scribe.py`, `backend/audio_scribe.py` — deterministic SOAP drafts and consent-gated audio demo stub
+- `memory/hindsight_client.py` — Hindsight integration or local per-patient JSON memory
+- `backend/rx_sign.py`, `backend/fhir.py` — signed demo prescriptions and FHIR bundle generation
+- `frontend/` — browser demo
 
-1. Load timeline for demo-001, try revoked ON to prove locking.
-2. Run throat consult — red CONFLICT with citation + azithromycin alternative.
-3. Apply correction — mental model `avoid-penicillin-class` appears, recheck SAFE, booking suggests Saturday.
-4. Sign — QR + verify VALID, tamper demo FAILS, FHIR downloads, audit shows trail.
+## Configuration and limits
 
-## APIs used
+Copy `.env.example` to `.env` and load its values in your environment as needed. `CLINIVA_ENV=prod` requires unique auth and prescription secrets of at least 32 characters and disables the built-in demo login. Production use also requires replacing the demo identity store with a real identity provider, deploying authenticated consent capture, configuring TLS and secure key storage, and completing clinical, privacy, and regulatory review. The current consent store, ABDM artefacts, reminders, audit storage, local memory fallback, and region value are demonstration implementations; they do not establish legal compliance, encryption at rest, data residency, or production-grade audit guarantees.
 
-RxNorm REST, openFDA drug labels, DailyMed (citations), Hindsight retain/recall/reflect, Azure-ready (Speech, OpenAI, Key Vault, Health Data Services via env flags).
+`python backend/seed.py` preserves existing memory data. Use `python backend/seed.py --reset` to replace only the two demo patient memory files; prescription records and other patient memory files are preserved.
 
-## Disclaimer
+Run deterministic, offline, isolated module checks with `python test_e2e.py`. They use a temporary directory and do not change project patient, prescription, or audit data. They do not test the HTTP authorization policy.
 
-Prototype. Supports, does not replace clinical judgment. Doctor validation mandatory.
+Install `backend/requirements-dev.txt` and run `pytest tests/api_security_checks.py` for HTTP-level checks of role enforcement, consent defaults and revocation, prescription access, clinical review gating when screening is incomplete, audit minimization, safe upload naming, input validation, and patient-ID handling. The API checks use temporary data stores.

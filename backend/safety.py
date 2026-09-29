@@ -1,5 +1,5 @@
 """
-Cliniva Safety Agent 10/10 — grounded, never guesses.
+Cliniva safety checks — use retrieved evidence and report uncertainty.
 Pipeline: live RxNorm -> pinned DDInter rules -> OpenFDA own-label -> DailyMed citations.
 LLM only summarizes retrieved evidence.
 Verdicts: CONFLICT | NO_CONFLICT | INSUFFICIENT_DATA
@@ -221,10 +221,11 @@ def check_interactions(meds: list[str], allergies: list[str] | None = None) -> d
             "disclaimer": "Supports, does not replace clinical judgment. Doctor validation required.",
         }
     if fda_notes:
-        return {"verdict": "NO_CONFLICT", "severity": "unknown", "findings": [],
+        # A few label snippets cannot prove a prescription is interaction-free.
+        return {"verdict": "INSUFFICIENT_DATA", "severity": "unknown", "findings": [],
                 "normalized": normalized_map, "fda_notes": fda_notes[:4],
                 "citations": [dailymed_link(m) for m in normed],
-                "disclaimer": "No pinned interaction found. FDA label snippets attached. Verify clinically."}
+                "disclaimer": "FDA label context is attached, but this is not a complete interaction screen. Verify the full regimen clinically."}
     return {"verdict": "INSUFFICIENT_DATA", "severity": "unknown", "findings": [],
             "normalized": normalized_map,
             "disclaimer": "No structured source found. Do not guess — verify with pharmacist/label."}

@@ -3,14 +3,13 @@ import base64
 import hashlib
 import io
 import json
-import os
 import time
 import uuid
 
 import jwt  # PyJWT
+from backend.config import RX_SECRET, VERIFY_BASE
 
-SECRET = os.getenv("CLINIVA_RX_SECRET", "cliniva-hackathon-demo-secret-change-in-prod")
-VERIFY_BASE = os.getenv("CLINIVA_VERIFY_BASE", "http://127.0.0.1:8000/verify-page")
+SECRET = RX_SECRET
 
 
 def _canonical(payload: dict) -> str:
@@ -27,7 +26,7 @@ def qr_png_base64(payload: str) -> str:
 
 
 def sign_prescription(patient_id: str, doctor_id: str, doctor_reg: str, meds: list, soap: dict) -> dict:
-    rx_id = str(uuid.uuid4())[:8]
+    rx_id = str(uuid.uuid4())
     body = {
         "rx_id": rx_id,
         "patient_id": patient_id,

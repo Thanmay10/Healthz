@@ -1,18 +1,48 @@
 const $ = (id) => document.getElementById(id);
 const API = "";
-let lastDraft = null, lastToken = "", lastRxId = "", lastFlagged = "amoxicillin";
+let lastDraft = null, lastToken = "", lastRxId = "", lastFlagged = "amoxicillin", authToken = "";
 
 async function j(url, opts = {}) {
-  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
-  return r.json();
+  const status = $("status");
+  if (status) status.textContent = "Working…";
+  try {
+    const r = await fetch(url, { ...opts, headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...(opts.headers || {}) } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const detail = Array.isArray(body.detail) ? "Please check the submitted fields." : body.detail || body.error || `Request failed (${r.status})`;
+      throw new Error(detail);
+    }
+    if (status) status.textContent = "Connected · local demo API ready";
+    return body;
+  } catch (error) {
+    if (status) status.textContent = `Could not complete request: ${error.message}`;
+    throw error;
+  }
+}
+async function login(username) {
+  const out = await j(`${API}/auth/login`, { method: "POST", body: JSON.stringify({ username, password: "demo123" }), headers: {} });
+  authToken = out.token;
 }
 async function init() {
+  await login("dr-demo");
   const pts = await j(`${API}/patients`).catch(() => []);
-  $("patient").innerHTML = (pts || []).map(p =>
-    `<option value="${p.patient_id}">${p.patient_id} — ${p.name} (${(p.allergies || []).map(a => a.agent).join(",") || "NKDA"})</option>`
-  ).join("") || `<option value="demo-001">demo-001</option>`;
+  const patientSelect = $("patient");
+  patientSelect.replaceChildren();
+  (pts || []).forEach(p => {
+    const option = document.createElement("option");
+    option.value = p.patient_id;
+    option.textContent = `${p.patient_id} — ${p.name}`;
+    patientSelect.appendChild(option);
+  });
+  if (!patientSelect.options.length) {
+    const option = document.createElement("option");
+    option.value = "demo-001";
+    option.textContent = "demo-001";
+    patientSelect.appendChild(option);
+  }
   document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => $("transcript").value = b.dataset.t);
   $("loadTimeline").onclick = loadTimeline;
+  $("saveConsent").onclick = saveConsent;
   $("notice").onclick = async () => $("extra").textContent = JSON.stringify(await j(`${API}/consent-notice`), null, 2);
   $("memoryBtn").onclick = async () => $("extra").textContent = JSON.stringify(await j(`${API}/memory/${$("patient").value}`), null, 2);
   $("consult").onclick = consult;
@@ -20,16 +50,29 @@ async function init() {
   $("correct").onclick = correct;
   $("sign").onclick = sign;
   $("verifyBtn").onclick = verify;
+  $("fhirLink").onclick = downloadFhir;
   $("tamperBtn").onclick = async () => $("verify").textContent = JSON.stringify(await j(`${API}/tamper-demo`, { method: "POST", body: JSON.stringify({ token: lastToken }) }), null, 2);
   $("auditBtn").onclick = async () => $("audit").textContent = JSON.stringify(await j(`${API}/audit?limit=20`), null, 2);
   $("printBtn").onclick = () => window.print();
 }
 async function loadTimeline() {
-  const q = new URLSearchParams({ revoked: $("cRevoked").checked, no_allergies: !$("cAllergies").checked, no_meds: !$("cMeds").checked });
-  $("timeline").textContent = JSON.stringify(await j(`${API}/timeline/${$("patient").value}?${q}`), null, 2);
+  try { $("timeline").textContent = JSON.stringify(await j(`${API}/timeline/${$("patient").value}`), null, 2); }
+  catch (e) { $("timeline").textContent = e.message; }
+}
+async function saveConsent() {
+  const id = $("patient").value;
+  try {
+    await login(id === "demo-002" ? "patient-demo-2" : "patient-demo");
+    const out = await j(`${API}/consent/${id}`, { method: "POST", body: JSON.stringify({ revoked: $("cRevoked").checked, scopes: { history: $("cHistory").checked, allergies: $("cAllergies").checked, medications: $("cMeds").checked } }) });
+    await login("dr-demo");
+    $("extra").textContent = `Consent saved: ${JSON.stringify(out)}`;
+    await loadTimeline();
+  } catch (e) { await login("dr-demo"); alert(e.message); }
 }
 async function consult() {
-  const out = await j(`${API}/consult`, { method: "POST", body: JSON.stringify({ patient_id: $("patient").value, transcript: $("transcript").value }) });
+  let out;
+  try { out = await j(`${API}/consult`, { method: "POST", body: JSON.stringify({ patient_id: $("patient").value, transcript: $("transcript").value }) }); }
+  catch (e) { alert(e.message); return; }
   lastDraft = out.draft;
   $("soap").textContent = JSON.stringify(out.draft, null, 2);
   $("safety").textContent = JSON.stringify(out.safety, null, 2);
@@ -48,7 +91,9 @@ async function correct() {
   $("meds").value = (out.updated.draft_meds?.[0] || $("meds").value).replace(/ \(DRAFT.*/, "");
 }
 async function sign() {
-  const out = await j(`${API}/sign`, { method: "POST", body: JSON.stringify({ patient_id: $("patient").value, doctor_id: "dr-demo", doctor_reg: "MCI-12345", meds: [$("meds").value], soap: { assessment: lastDraft?.assessment || "", plan: $("correction").value } }) });
+  let out;
+  try { out = await j(`${API}/sign`, { method: "POST", body: JSON.stringify({ patient_id: $("patient").value, doctor_id: "dr-demo", doctor_reg: "MCI-12345", meds: [$("meds").value], soap: { assessment: lastDraft?.assessment || "", plan: $("correction").value }, clinician_confirmed_insufficient_data: $("uncertainConfirm").checked }) }); }
+  catch (e) { alert(e.message); return; }
   lastToken = out.token; lastRxId = out.rx_id;
   $("rx").textContent = JSON.stringify({ rx_id: out.rx_id, qr_payload: out.qr_payload, hash: out.hash }, null, 2);
   if (out.qr_png_base64) $("qr").src = "data:image/png;base64," + out.qr_png_base64;
@@ -57,5 +102,18 @@ async function sign() {
 }
 async function verify() {
   $("verify").textContent = JSON.stringify(await j(`${API}/verify`, { method: "POST", body: JSON.stringify({ token: lastToken }) }), null, 2);
+}
+async function downloadFhir(event) {
+  event.preventDefault();
+  if (!lastRxId) return alert("Sign a prescription first");
+  try {
+    const result = await j(`${API}/fhir-rx/${lastRxId}`);
+    const blob = new Blob([JSON.stringify(result.fhir_bundle, null, 2)], { type: "application/fhir+json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${lastRxId}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (e) { alert(e.message); }
 }
 init();

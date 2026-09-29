@@ -1,7 +1,9 @@
 """ABDM FHIR R4 minimal PrescriptionRecord bundle builder (Composition + MedicationRequest)."""
+from datetime import datetime, timezone
 
 
 def fhir_bundle(patient_id: str, abha: str, doctor_id: str, doctor_reg: str, meds: list, rx_id: str, issued_ts: int) -> dict:
+    issued_at = datetime.fromtimestamp(int(issued_ts), tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     med_reqs = []
     entries = [
         {"resourceType": "Patient", "id": patient_id, "identifier": [{"system": "https://abdm.gov.in/abha", "value": abha}]},
@@ -26,7 +28,7 @@ def fhir_bundle(patient_id: str, abha: str, doctor_id: str, doctor_reg: str, med
         "status": "final",
         "type": {"coding": [{"system": "http://snomed.info/sct", "code": "440654001", "display": "Prescription record"}]},
         "subject": {"reference": f"Patient/{patient_id}"},
-        "date": issued_ts,
+        "date": issued_at,
         "author": [{"reference": f"Practitioner/{doctor_id}"}],
         "title": "PrescriptionRecord (ABDM FHIR R4 demo)",
         "section": [{"title": "Medications", "entry": [{"reference": f"MedicationRequest/{m['id']}"} for m in med_reqs]}],

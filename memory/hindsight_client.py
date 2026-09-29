@@ -1,11 +1,13 @@
 """
-Cliniva Hindsight memory client 10/10.
+Cliniva Hindsight memory client with a local demo fallback.
 One bank per patient. All agents share same bankId.
 Local JSON fallback mirrors Hindsight semantics: facts -> observations -> mental models.
 """
 import json
 import os
 import pathlib
+import re
+import threading
 import time
 
 import requests
@@ -13,14 +15,19 @@ import requests
 HINDSIGHT_URL = os.getenv("HINDSIGHT_URL", "")
 HINDSIGHT_API_KEY = os.getenv("HINDSIGHT_API_KEY", "")
 LOCAL_DIR = pathlib.Path(__file__).resolve().parent.parent / "data" / "banks"
-LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+_LOCAL_LOCK = threading.RLock()
 
 
 def bank_id_for_patient(patient_id: str) -> str:
-    return f"cliniva-patient-{patient_id}"
+    value = str(patient_id or "")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
+        raise ValueError("Invalid patient ID")
+    return f"cliniva-patient-{value}"
 
 
 def _local_path(bank_id: str) -> pathlib.Path:
+    if not re.fullmatch(r"cliniva-patient-[A-Za-z0-9_-]{1,64}", bank_id):
+        raise ValueError("Invalid memory bank ID")
     return LOCAL_DIR / f"{bank_id}.json"
 
 
@@ -29,17 +36,25 @@ def _load_local(bank_id: str) -> dict:
     if p.exists():
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
-            d.setdefault("facts", [])
-            d.setdefault("observations", [])
-            d.setdefault("mental_models", [])
-            return d
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Memory bank is unreadable: {bank_id}") from exc
+        if not isinstance(d, dict):
+            raise RuntimeError(f"Memory bank has an invalid structure: {bank_id}")
+        for key in ("facts", "observations", "mental_models"):
+            if key not in d:
+                d[key] = []
+            if not isinstance(d[key], list):
+                raise RuntimeError(f"Memory bank has an invalid {key} field: {bank_id}")
+        return d
     return {"bank_id": bank_id, "facts": [], "observations": [], "mental_models": []}
 
 
 def _save_local(bank_id: str, data: dict):
-    _local_path(bank_id).write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+    path = _local_path(bank_id)
+    temp_path = path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path.replace(path)
 
 
 def _promote_mental_model(data: dict, content: str, evidence: str):
@@ -72,17 +87,18 @@ def retain(bank_id: str, content: str, kind: str = "world_fact", metadata: dict 
         )
         r.raise_for_status()
         return r.json()
-    data = _load_local(bank_id)
-    data["facts"].append(record)
-    low = content.lower()
-    if kind == "correction" or any(k in low for k in ["allergy", "allergic", "intolerant", "stop ", "avoid "]):
-        obs = f"LEARNED: {content}"
-        if obs not in [o["content"] for o in data["observations"]]:
-            data["observations"].append({"content": obs, "evidence": [content], "ts": record["ts"]})
-        _promote_mental_model(data, content, content)
-    elif kind == "world_fact" and ("prefer" in low or "follow" in low):
-        _promote_mental_model(data, content, content)
-    _save_local(bank_id, data)
+    with _LOCAL_LOCK:
+        data = _load_local(bank_id)
+        data["facts"].append(record)
+        low = content.lower()
+        if kind == "correction" or any(k in low for k in ["allergy", "allergic", "intolerant", "stop ", "avoid "]):
+            obs = f"LEARNED: {content}"
+            if obs not in [o["content"] for o in data["observations"]]:
+                data["observations"].append({"content": obs, "evidence": [content], "ts": record["ts"]})
+            _promote_mental_model(data, content, content)
+        elif kind == "world_fact" and ("prefer" in low or "follow" in low):
+            _promote_mental_model(data, content, content)
+        _save_local(bank_id, data)
     return {"ok": True, "bank_id": bank_id, "stored": record}
 
 

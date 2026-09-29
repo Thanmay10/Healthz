@@ -8,10 +8,10 @@ DATA = pathlib.Path(__file__).resolve().parent.parent / "data"
 CHAIN = DATA / "audit_chain.jsonl"
 
 RETENTION = {
-    "opd_note": {"years": 10, "basis": "MCI/Clinical Establishments record rules"},
-    "prescription": {"years": 10, "basis": "Pharmacy Practice Regulations"},
-    "audio": {"years": 3, "basis": "configurable; erase on request after minimum"},
-    "analytics": {"years": 1, "basis": "DPDP purpose limitation; erase on withdraw"},
+    "opd_note": {"years": 10, "basis": "demo setting; confirm with applicable requirements"},
+    "prescription": {"years": 10, "basis": "demo setting; confirm with applicable requirements"},
+    "audio": {"years": 3, "basis": "demo setting; not a production policy"},
+    "analytics": {"years": 1, "basis": "demo setting; not a production policy"},
 }
 
 
@@ -19,11 +19,12 @@ def chain_log(event: str, patient_id: str = "", actor: str = "", detail: dict | 
     DATA.mkdir(parents=True, exist_ok=True)
     prev = "GENESIS"
     if CHAIN.exists():
-        try:
-            last = CHAIN.read_text(encoding="utf-8").strip().split("\n")[-1]
-            prev = json.loads(last).get("hash", prev)
-        except Exception:
-            pass
+        verified = verify_chain()
+        if not verified["ok"]:
+            raise RuntimeError("Audit chain is damaged; refusing to append")
+        lines = CHAIN.read_text(encoding="utf-8").splitlines()
+        if lines:
+            prev = json.loads(lines[-1])["hash"]
     rec = {"ts": int(time.time()), "event": event, "patient_id": patient_id, "actor": actor, "detail": detail or {}, "prev": prev}
     rec["hash"] = hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).hexdigest()
     with CHAIN.open("a", encoding="utf-8") as f:
@@ -32,16 +33,25 @@ def chain_log(event: str, patient_id: str = "", actor: str = "", detail: dict | 
 
 
 def verify_chain(limit: int = 200) -> dict:
+    """Verify the complete chain. `limit` remains accepted for older callers."""
     if not CHAIN.exists():
         return {"ok": True, "checked": 0}
-    lines = CHAIN.read_text(encoding="utf-8").strip().split("\n")[-limit:]
-    prev = None
+    try:
+        lines = CHAIN.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return {"ok": False, "bad_index": 0}
+    prev = "GENESIS"
     for i, ln in enumerate(lines):
-        r = json.loads(ln)
-        h = r.pop("hash")
-        if hashlib.sha256(json.dumps(r, sort_keys=True).encode()).hexdigest() != h:
+        try:
+            record = json.loads(ln)
+            h = record.pop("hash")
+        except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
             return {"ok": False, "bad_index": i}
-        if prev is not None and r.get("prev") != prev:
+        if not isinstance(record, dict) or not isinstance(h, str):
+            return {"ok": False, "bad_index": i}
+        if hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest() != h:
+            return {"ok": False, "bad_index": i}
+        if record.get("prev") != prev:
             return {"ok": False, "bad_link": i}
         prev = h
     return {"ok": True, "checked": len(lines)}
@@ -65,8 +75,8 @@ def suggest_slots(preferences: dict, booked: list | None = None) -> dict:
 
 
 def send_reminder(channel: str, to: str, text: str) -> dict:
-    # mock provider; swap with Twilio/WhatsApp in prod via SMS_PROVIDER
-    return {"sent": True, "channel": channel, "to": to, "preview": text[:120], "provider": "mock (set SMS_PROVIDER=twilio in prod)"}
+    # Deliberately simulate delivery; no message is sent by this prototype.
+    return {"sent": False, "simulated": True, "channel": channel, "to": to, "preview": text[:120], "provider": "mock"}
 
 
 def memory_regression() -> dict:

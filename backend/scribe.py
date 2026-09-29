@@ -1,4 +1,4 @@
-"""Cliniva Scribe 10/10 — transcript -> SOAP draft + ICD-10 hints. Doctor must edit + sign."""
+"""Cliniva demo scribe: transcript -> SOAP draft + ICD-10 hints for clinician review."""
 ICD_HINTS = [
     ("throat pain", "J02.9", "Acute pharyngitis, unspecified"),
     ("fever", "R50.9", "Fever, unspecified"),
