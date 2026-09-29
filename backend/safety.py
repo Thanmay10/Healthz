@@ -4,6 +4,7 @@ Pipeline: live RxNorm -> pinned DDInter rules -> OpenFDA own-label -> DailyMed c
 LLM only summarizes retrieved evidence.
 Verdicts: CONFLICT | NO_CONFLICT | INSUFFICIENT_DATA
 """
+import os
 import re
 import requests
 
@@ -111,7 +112,10 @@ def normalize(name: str) -> str:
     n = re.sub(r"[^a-z ]", "", n).strip()
     if n in BRAND_MAP:
         return BRAND_MAP[n]
-    rxnorm_lookup(n)  # warm cache, best-effort
+    # Hot path stays offline-first (brand map + cache only). Live RxNorm
+    # resolution is opt-in via CLINIVA_RXNORM_LIVE=1; drug_info() always live.
+    if os.getenv("CLINIVA_RXNORM_LIVE", "") == "1":
+        rxnorm_lookup(n)  # warm cache, best-effort
     return n
 
 
